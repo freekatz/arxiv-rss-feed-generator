@@ -1,25 +1,27 @@
 /**
  * arXiv RSS Proxy API for Vercel
  *
- * Usage:
- *   /api/rss?q=cat:cs.LG&date=yesterday&max=50
+ * Usage (same as arXiv API, plus date parameter):
+ *   /api/rss?search_query=cat:cs.LG&date=yesterday&max_results=50
  *
- * Parameters:
- *   - q: search query (without date filter)
- *   - date: yesterday | today | week | month | none | YYYYMMDD-YYYYMMDD
- *   - sort: submittedDate | lastUpdatedDate | relevance (default: submittedDate)
- *   - order: descending | ascending (default: descending)
- *   - max: max results (default: 50)
+ * Parameters (matching arXiv API):
+ *   - search_query: search query (without date filter)
+ *   - sortBy: submittedDate | lastUpdatedDate | relevance (default: submittedDate)
+ *   - sortOrder: descending | ascending (default: descending)
  *   - start: start index (default: 0)
+ *   - max_results: max results (default: 50)
+ *
+ * Additional parameter:
+ *   - date: yesterday | today | week | month | none | YYYYMMDD-YYYYMMDD
  */
 
 export default async function handler(req, res) {
-  // Get parameters
-  const query = req.query.q || '';
-  const dateParam = req.query.date || 'yesterday';
-  const sortBy = req.query.sort || 'submittedDate';
-  const sortOrder = req.query.order || 'descending';
-  const maxResults = req.query.max || '50';
+  // Get parameters (matching arXiv API naming)
+  const query = req.query.search_query || '';
+  const dateParam = req.query.date || 'none';
+  const sortBy = req.query.sortBy || 'submittedDate';
+  const sortOrder = req.query.sortOrder || 'descending';
+  const maxResults = req.query.max_results || '50';
   const start = req.query.start || '0';
 
   // Calculate date range

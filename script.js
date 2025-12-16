@@ -926,11 +926,8 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelector('.result-container').style.display = 'block';
     }
 
-    // Generate API URL with date parameter
+    // Generate API URL with date parameter (matching arXiv API style)
     function generateWorkerUrl() {
-        // Use current origin for the API path
-        const baseUrl = window.location.origin;
-
         // Build query without date
         let searchQuery = buildQueryFromGroup(searchTermsContainer);
 
@@ -952,25 +949,22 @@ document.addEventListener('DOMContentLoaded', function() {
         const sortOrder = document.getElementById('sort-order').value;
         const maxResults = maxResultsInput.value || '50';
 
-        // Build API URL params
+        // Build API URL params (matching arXiv API naming)
         const params = new URLSearchParams();
         if (searchQuery) {
-            params.append('q', searchQuery);
+            params.append('search_query', searchQuery);
         }
+        params.append('sortBy', sortBy);
+        params.append('sortOrder', sortOrder);
+        params.append('start', '0');
+        params.append('max_results', maxResults);
+        // Additional date parameter for proxy
         if (dateType !== 'none') {
             params.append('date', dateType);
         }
-        if (sortBy !== 'submittedDate') {
-            params.append('sort', sortBy);
-        }
-        if (sortOrder !== 'descending') {
-            params.append('order', sortOrder);
-        }
-        if (maxResults !== '50') {
-            params.append('max', maxResults);
-        }
 
-        return `${baseUrl}/api/rss?${params.toString()}`;
+        // Return only route part (without host)
+        return `/api/rss?${params.toString()}`;
     }
 
     // Copy Worker URL to clipboard

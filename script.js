@@ -187,11 +187,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Import button
     importBtn.addEventListener('click', importQuery);
-    importQueryInput.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            importQuery();
-        }
-    });
 
     // Date range type change
     dateRangeType.addEventListener('change', function() {
@@ -514,65 +509,15 @@ document.addEventListener('DOMContentLoaded', function() {
         updateChipSelection();
     }
 
-    function parseQueryString(query) {
-        const result = {
-            terms: [],
-            categories: []
-        };
-
-        // Tokenize the query
-        const tokens = tokenizeQuery(query);
-
-        let currentConnector = 'AND';
-
-        for (let i = 0; i < tokens.length; i++) {
-            const token = tokens[i];
-
-            if (token === 'AND' || token === 'OR' || token === 'ANDNOT') {
-                currentConnector = token;
-                continue;
-            }
-
-            // Skip parentheses for now (simplified parsing)
-            if (token === '(' || token === ')') {
-                continue;
-            }
-
-            // Parse field:value
-            const colonIndex = token.indexOf(':');
-            if (colonIndex > 0) {
-                const field = token.substring(0, colonIndex);
-                let value = token.substring(colonIndex + 1);
-
-                // Remove quotes if present
-                if ((value.startsWith('"') && value.endsWith('"')) ||
-                    (value.startsWith("'") && value.endsWith("'"))) {
-                    value = value.slice(1, -1);
-                }
-
-                // Handle categories separately
-                if (field === 'cat') {
-                    if (!result.categories.includes(value)) {
-                        result.categories.push(value);
-                    }
-                } else {
-                    result.terms.push({
-                        field: field,
-                        value: value,
-                        connector: result.terms.length > 0 ? currentConnector : null
-                    });
-                }
-            }
-        }
-
-        return result;
-    }
-
+    // Tokenize query string into tokens (handles quotes and parentheses)
     function tokenizeQuery(query) {
         const tokens = [];
         let current = '';
         let inQuotes = false;
         let quoteChar = '';
+
+        // Normalize whitespace (replace newlines with spaces)
+        query = query.replace(/[\r\n]+/g, ' ');
 
         for (let i = 0; i < query.length; i++) {
             const char = query[i];
@@ -585,14 +530,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 inQuotes = false;
                 current += char;
                 quoteChar = '';
-            } else if (!inQuotes && (char === ' ' || char === '(' || char === ')')) {
+            } else if (!inQuotes && (char === ' ' || char === '\t')) {
                 if (current.trim()) {
                     tokens.push(current.trim());
                 }
                 current = '';
-                if (char === '(' || char === ')') {
-                    tokens.push(char);
+            } else if (!inQuotes && (char === '(' || char === ')')) {
+                if (current.trim()) {
+                    tokens.push(current.trim());
                 }
+                current = '';
+                tokens.push(char);
             } else {
                 current += char;
             }
@@ -605,6 +553,98 @@ document.addEventListener('DOMContentLoaded', function() {
         return tokens;
     }
 
+    // Parse tokens into a tree structure with nested groups
+    function parseQueryString(query) {
+        const tokens = tokenizeQuery(query);
+        const categories = [];
+
+        // Parse tokens into tree structure
+        function parseTokens(tokens, start, end) {
+            const items = [];
+            let i = start;
+            let currentConnector = null;
+
+            while (i < end) {
+                const token = tokens[i];
+
+                // Handle connectors
+                if (token === 'AND' || token === 'OR' || token === 'ANDNOT') {
+                    currentConnector = token;
+                    i++;
+                    continue;
+                }
+
+                // Handle opening parenthesis - find matching close and recurse
+                if (token === '(') {
+                    let depth = 1;
+                    let j = i + 1;
+                    while (j < end && depth > 0) {
+                        if (tokens[j] === '(') depth++;
+                        if (tokens[j] === ')') depth--;
+                        j++;
+                    }
+                    // j now points to one past the matching ')'
+                    const groupItems = parseTokens(tokens, i + 1, j - 1);
+                    if (groupItems.length > 0) {
+                        items.push({
+                            type: 'group',
+                            items: groupItems,
+                            connector: items.length > 0 ? (currentConnector || 'AND') : null
+                        });
+                    }
+                    currentConnector = null;
+                    i = j;
+                    continue;
+                }
+
+                // Skip closing parenthesis (handled above)
+                if (token === ')') {
+                    i++;
+                    continue;
+                }
+
+                // Parse field:value term
+                const colonIndex = token.indexOf(':');
+                if (colonIndex > 0) {
+                    const field = token.substring(0, colonIndex);
+                    let value = token.substring(colonIndex + 1);
+
+                    // Remove quotes if present
+                    if ((value.startsWith('"') && value.endsWith('"')) ||
+                        (value.startsWith("'") && value.endsWith("'"))) {
+                        value = value.slice(1, -1);
+                    }
+
+                    // Handle categories separately
+                    if (field === 'cat') {
+                        if (!categories.includes(value)) {
+                            categories.push(value);
+                        }
+                    } else {
+                        items.push({
+                            type: 'term',
+                            field: field,
+                            value: value,
+                            connector: items.length > 0 ? (currentConnector || 'AND') : null
+                        });
+                    }
+                    currentConnector = null;
+                }
+                i++;
+            }
+
+            return items;
+        }
+
+        const items = parseTokens(tokens, 0, tokens.length);
+
+        return {
+            items: items,
+            categories: categories
+        };
+    }
+
+    // Recursively fill form from parsed structure
     function fillFormWithParsed(parsed) {
         // Fill categories
         selectedCategories = parsed.categories;
@@ -612,53 +652,86 @@ document.addEventListener('DOMContentLoaded', function() {
         updateCategoryListSelection();
         updateChipSelection();
 
-        // Fill terms
-        if (parsed.terms.length === 0) return;
+        // Fill terms recursively
+        if (parsed.items.length === 0) return;
 
-        // Set first term
+        // Remove the default first term
         const firstTerm = searchTermsContainer.querySelector('.search-term');
-        if (firstTerm && parsed.terms[0]) {
-            const fieldSelect = firstTerm.querySelector('.field-selector');
-            const termInput = firstTerm.querySelector('.term-input');
-
-            // Check if field exists in options
-            const fieldOptions = Array.from(fieldSelect.options).map(o => o.value);
-            if (fieldOptions.includes(parsed.terms[0].field)) {
-                fieldSelect.value = parsed.terms[0].field;
-            } else {
-                fieldSelect.value = 'all';
-            }
-            termInput.value = parsed.terms[0].value;
+        if (firstTerm) {
+            firstTerm.remove();
         }
 
-        // Add remaining terms
-        for (let i = 1; i < parsed.terms.length; i++) {
-            const term = parsed.terms[i];
+        // Recursively add items to a group
+        function addItemsToGroup(group, items) {
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
 
-            // Set connector
-            if (term.connector) {
-                termConnector.value = term.connector;
-            }
-
-            // Add new term
-            addSearchTerm(searchTermsContainer);
-
-            // Fill the new term
-            const allTerms = searchTermsContainer.querySelectorAll('.search-term');
-            const newTerm = allTerms[allTerms.length - 1];
-            if (newTerm) {
-                const fieldSelect = newTerm.querySelector('.field-selector');
-                const termInput = newTerm.querySelector('.term-input');
-
-                const fieldOptions = Array.from(fieldSelect.options).map(o => o.value);
-                if (fieldOptions.includes(term.field)) {
-                    fieldSelect.value = term.field;
-                } else {
-                    fieldSelect.value = 'all';
+                // Add connector before item (except first)
+                if (i > 0 && item.connector) {
+                    const connector = document.createElement('div');
+                    connector.className = 'connector-label';
+                    connector.textContent = item.connector;
+                    group.appendChild(connector);
                 }
-                termInput.value = term.value;
+
+                if (item.type === 'term') {
+                    // Add a term
+                    const newTerm = document.createElement('div');
+                    newTerm.className = 'search-term';
+                    newTerm.innerHTML = `
+                        <select class="field-selector">
+                            <option value="ti">Title</option>
+                            <option value="au">Author</option>
+                            <option value="abs">Abstract</option>
+                            <option value="co">Comment</option>
+                            <option value="jr">Journal Reference</option>
+                            <option value="cat">Category</option>
+                            <option value="all">All Fields</option>
+                        </select>
+                        <input type="text" class="term-input" placeholder="Enter search term">
+                        <div class="term-actions">
+                            <button class="remove-term" title="Remove term">✕</button>
+                        </div>
+                    `;
+                    group.appendChild(newTerm);
+
+                    // Set field and value
+                    const fieldSelect = newTerm.querySelector('.field-selector');
+                    const termInput = newTerm.querySelector('.term-input');
+                    const fieldOptions = Array.from(fieldSelect.options).map(o => o.value);
+                    if (fieldOptions.includes(item.field)) {
+                        fieldSelect.value = item.field;
+                    } else {
+                        fieldSelect.value = 'all';
+                    }
+                    termInput.value = item.value;
+
+                } else if (item.type === 'group') {
+                    // Add a nested group
+                    const newGroup = document.createElement('div');
+                    newGroup.className = 'term-group';
+                    newGroup.innerHTML = `
+                        <div class="group-controls">
+                            <span class="group-indicator">Group</span>
+                            <div class="group-actions">
+                                <button class="remove-group" title="Remove group">✕</button>
+                            </div>
+                        </div>
+                    `;
+                    group.appendChild(newGroup);
+                    makeGroupSelectable(newGroup);
+
+                    // Recursively add items to nested group
+                    addItemsToGroup(newGroup, item.items);
+                }
             }
         }
+
+        addItemsToGroup(searchTermsContainer, parsed.items);
+
+        // Re-initialize event handlers
+        initializeRemoveButtons();
+        initializeGroupControls();
     }
 
     // Function to add a new search term input to a group
@@ -916,8 +989,15 @@ document.addEventListener('DOMContentLoaded', function() {
         resultUrl.textContent = finalUrl;
 
         // Generate Worker URL (without date in query)
-        const workerUrlStr = generateWorkerUrl();
-        workerUrl.textContent = workerUrlStr;
+        // For custom date range, fall back to static URL (just the path part)
+        const dateType = dateRangeType.value;
+        if (dateType === 'custom') {
+            // Custom range uses fixed dates, so use static URL path
+            workerUrl.textContent = `/api/rss?${params.toString()}`;
+        } else {
+            const workerUrlStr = generateWorkerUrl();
+            workerUrl.textContent = workerUrlStr;
+        }
 
         // Update query preview
         updateQueryPreview();
